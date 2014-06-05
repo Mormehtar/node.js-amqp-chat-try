@@ -3,11 +3,13 @@
  */
 
 var amqp = require("amqplib/callback_api");
+var readline = require('readline');
 
 var common_options = {durable: true};
-var nickname = "darkrider";
 
-var readline = require('readline');
+var nickname = process.argv[2] || "guest";
+
+
 
 var rl = readline.createInterface({
     input: process.stdin,
@@ -17,6 +19,8 @@ var rl = readline.createInterface({
 var private_route = "*." + nickname;
 var global_route = "chat.*";
 var last_sender = "";
+
+var private_queue = nickname + "_private";
 
 function parse(msg, verb){
     try {
@@ -33,6 +37,14 @@ function parse(msg, verb){
     return message;
 }
 
+function chat(channel, message, route){
+    channel.publish("chat4", route, new Buffer(JSON.stringify({
+        dt: new Date(),
+        message: message,
+        sender: nickname
+    })), common_options);
+}
+
 amqp.connect("amqp://fe-01.pharmhub.ru", function(err, conn) {
     conn.createChannel(function(err, channel) {
         channel.assertQueue("", {exclusive:true}, function(err, ok) {
@@ -47,7 +59,7 @@ amqp.connect("amqp://fe-01.pharmhub.ru", function(err, conn) {
         });
     });
     conn.createChannel(function(err, channel) {
-        channel.assertQueue("", {exclusive:true}, function(err, ok) {
+        channel.assertQueue(private_queue, {exclusive:true}, function(err, ok) {
             var private_queue = ok.queue;
             channel.assertExchange("chat4", "topic", common_options, function(err, ok) {
                 channel.bindQueue(private_queue, "chat4", private_route);
@@ -62,6 +74,7 @@ amqp.connect("amqp://fe-01.pharmhub.ru", function(err, conn) {
     conn.createChannel(function(err, channel) {
         channel.assertExchange("chat4", "topic", common_options, function(err, ok) {
             rl.on('line', function (cmd) {
+                var msg, route;
                 if (cmd[0] == "-"){
                     var space = cmd.indexOf(" ");
                     var target = cmd.substr(1, space - 1).trim();
@@ -72,21 +85,13 @@ amqp.connect("amqp://fe-01.pharmhub.ru", function(err, conn) {
                             target = nickname;
                         }
                     }
-                    var msg = cmd.substr(space).trim();
-
-                    channel.publish("chat4", "direct." + target, new Buffer(JSON.stringify({
-                        dt: new Date(),
-                        message: msg,
-                        sender: nickname
-                    })), common_options);
+                    msg = cmd.substr(space).trim();
+                    route = "direct." + target;
                 } else {
-                    channel.publish("chat4", "chat.main", new Buffer(JSON.stringify({
-                        dt: new Date(),
-                        message: cmd,
-                        sender: nickname
-                    })), common_options);
+                    route = "chat.main";
+                    msg = cmd;
                 }
-
+                chat(channel, msg, route);
             });
         })
     });
